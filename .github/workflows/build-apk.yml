@@ -18,7 +18,7 @@ jobs:
         run: |
           ZIP_FILE=$(find . -maxdepth 2 -type f -name 'SAAD_SPICES_Android_Local.zip' | head -1)
           if [ -z "$ZIP_FILE" ]; then
-            echo "SAAD_SPICES_Android_Local.zip not found in repository root."
+            echo "SAAD_SPICES_Android_Local_v2.zip not found in repository root."
             exit 1
           fi
           rm -rf project
