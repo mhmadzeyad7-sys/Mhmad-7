@@ -1,0 +1,92 @@
+name: Build SAAD SPICES APK
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Locate project ZIP when repository contains ZIP
+        id: locate
+        shell: bash
+        run: |
+          set -e
+          ZIP_FILE=$(find . -maxdepth 2 -type f -iname 'SAAD_SPICES*.zip' | head -1 || true)
+          if [ -n "$ZIP_FILE" ]; then
+            echo "Found ZIP: $ZIP_FILE"
+            rm -rf project
+            mkdir project
+            unzip -o "$ZIP_FILE" -d project
+            SETTINGS=$(find project -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -1)
+            if [ -z "$SETTINGS" ]; then echo "Android project not found inside ZIP"; exit 1; fi
+            PROJECT_DIR=$(dirname "$SETTINGS")
+          else
+            SETTINGS=$(find . -type f \( -name settings.gradle -o -name settings.gradle.kts \) | head -1)
+            if [ -z "$SETTINGS" ]; then echo "No Android project or SAAD SPICES ZIP found"; exit 1; fi
+            PROJECT_DIR=$(dirname "$SETTINGS")
+          fi
+          echo "PROJECT_DIR=$PROJECT_DIR" >> "$GITHUB_ENV"
+          echo "Project: $PROJECT_DIR"
+
+      - name: Configure Firebase from google-services.json
+        shell: bash
+        run: |
+          set -e
+          JSON=$(find . -type f -name google-services.json | head -1 || true)
+          if [ -z "$JSON" ]; then
+            JSON=$(find "$PROJECT_DIR" -type f -name google-services.json | head -1 || true)
+          fi
+          if [ -z "$JSON" ]; then
+            echo "No google-services.json found; building in local/offline Firebase-ready mode."
+            exit 0
+          fi
+          python3 - "$JSON" "$PROJECT_DIR/app/src/main/assets/firebase-config.js" <<'PY'
+          import json, sys, os
+          src, out = sys.argv[1], sys.argv[2]
+          d=json.load(open(src,encoding='utf-8'))
+          pi=d.get('project_info',{})
+          clients=d.get('client',[])
+          c=clients[0] if clients else {}
+          ci=c.get('client_info',{})
+          keys=c.get('api_key',[])
+          api=keys[0].get('current_key','') if keys else ''
+          project_id=pi.get('project_id','')
+          project_number=pi.get('project_number','')
+          storage=pi.get('storage_bucket') or (project_id+'.firebasestorage.app' if project_id else '')
+          app_id=ci.get('mobilesdk_app_id','')
+          cfg={"apiKey":api,"authDomain":project_id+'.firebaseapp.com',"projectId":project_id,"storageBucket":storage,"messagingSenderId":project_number,"appId":app_id}
+          os.makedirs(os.path.dirname(out),exist_ok=True)
+          with open(out,'w',encoding='utf-8') as f:
+              f.write('window.SAAD_FIREBASE_CONFIG = '+json.dumps(cfg,ensure_ascii=False,indent=2)+';\n')
+          print('Firebase config generated for project:', project_id)
+          PY
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.7'
+
+      - name: Build debug APK
+        working-directory: ${{ env.PROJECT_DIR }}
+        run: |
+          gradle assembleDebug --stacktrace
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: SAAD-SPICES-2.0-APK
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
